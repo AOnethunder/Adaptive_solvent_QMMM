@@ -1,0 +1,179 @@
+# VMD for WIN32, version 1.9.3 (November 30, 2016)
+# Log file 'C:/Users/Luosgan/Desktop/newlog', created by user Luosgan
+# Run this script in command line: vmd -e show_traj -args prmtop qmmm_xtb.crd
+proc save_viewpoint {} {
+   global viewpoints
+   if [info exists viewpoints] {unset viewpoints}
+   # get the current matricies
+   foreach mol [molinfo list] {
+      set viewpoints($mol) [molinfo $mol get {
+        center_matrix rotate_matrix scale_matrix global_matrix}]
+   }
+   puts ""
+   puts {### copy and paste into the vmd scripts (before runing "restore_viewpoint"!) ###}
+   puts "    [list array set viewpoints [array get viewpoints]]"
+   puts {### copy and paste into the vmd scripts (before runing "restore_viewpoint"!) ###}
+   puts ""
+}
+
+proc restore_viewpoint {} {
+   global viewpoints
+   foreach mol [molinfo list] {
+      puts "Trying $mol"
+      if [info exists viewpoints($mol)] {
+         molinfo $mol set {center_matrix rotate_matrix scale_matrix
+           global_matrix} $viewpoints($mol)
+      }
+   }
+}
+
+proc loadMol {prmtop crd} {
+   puts "\nLoading molecules..."
+   puts -nonewline "   Prmtop:  "
+   puts [file normalize $prmtop]
+   puts -nonewline "   Crd:  "
+   puts [file normalize $crd]
+   puts ""
+   mol new $prmtop type {parm7} first 0 last -1 step 1 waitfor 1
+   mol addfile $crd type {crdbox} first 1 last -1 step 100 waitfor 1 0
+}
+
+#### load your molecules
+loadMol [lindex $argv 0] [lindex $argv 1]
+
+#### your vmd settings for molecules
+mol modselect 0 0 resname WAT
+mol modstyle 0 0 CPK 0.100000 0.100000 50.000000 50.000000
+mol addrep 0
+mol modselect 1 0 {resname MOL "Na\+"}
+mol modstyle 1 0 CPK 0.900000 0.300000 60.000000 60.000000
+mol addrep 0
+mol modselect 2 0 resname WAT and name O
+mol modstyle 2 0 CPK 0.300000 0.300000 50.000000 12.000000
+#adding QM solvents
+mol addrep 0
+mol modselect 3 0 (same residue as within 5 of index 29) and not resname MOL
+mol modstyle 3 0 CPK 0.700000 0.300000 50.000000 12.000000
+axes location off
+color Display Background white
+#### run folling at the first time (choose a best view)
+#save_viewpoint
+#set outFile [open {viewpoint} w]  # save to a file
+#puts $outFile [list array set viewpoints [array get viewpoints]]
+#close $outFile
+#source {viewpoint}
+
+### copy and paste into the vmd scripts (before runing "restore_viewpoint"!) ###
+#array set viewpoints {0 {{{1 0 0 -20.2063} {0 1 0 -20.3463} {0 0 1 -17.8249} {0 0 0 1}} {{-0.174682 0.600274 -0.780487 0} {0.956984 -0.0829981 -0.278016 0} {-0.231664 -0.795479 -0.559955 0} {0 0 0 1}} {{0.22058 0 0 0} {0 0.22058 0 0} {0 0 0.22058 0} {0 0 0 1}} {{1 0 0 0} {0 1 0 0} {0 0 1 0} {0 0 0 1}}}}
+### copy and paste into the vmd scripts (before runing "restore_viewpoint"!) ###
+#restore_viewpoint
+
+# global variables
+set updmol top           ; # molecule we want the irregular update for
+set updrep 3           ; # representation id we need to toggle
+set stepup  1         ; # update only about every 50+x steps
+set lastup -$stepup    ; # last frame the rep was updated for
+set randup  $stepup    ; # add some randomness to the update
+global upd_mol upd_rep lastup stepup randup
+proc do_toggle_selupdate {args} {
+    global updmol updrep lastup stepup randup
+    #puts "do_toggle_selupdate:  args: dipmol $dipmol diprep $diprep lastup $lastup  stepup $stepup"
+    set frame [molinfo $updmol get frame]
+    if {[expr {abs( ${frame} - ${lastup})}] < [expr { $stepup+int(rand()*$randup)}]} {
+       mol selupdate updrep updmol 0
+    } else {
+       mol selupdate updrep updmol 1
+       set lastup $frame
+    }
+}
+# hook up the callback function
+trace add variable vmd_frame($updmol) write do_toggle_selupdate
+
+proc delbond { molid atom1 atom2 } {
+  if { $atom1 > $atom2 } {
+    set tmp $atom1
+    set atom1 $atom2
+    set atom2 $tmp
+  }
+  set sel [atomselect $molid "index $atom1 $atom2"]
+  lassign [$sel getbonds] bond1 bond2
+  
+  set id [lsearch -exact $bond1 $atom2]
+  if { $id != -1 } {
+    set bond1 [lreplace $bond1 $id $id ]
+  }
+  set id [lsearch -exact $bond2 $atom1]
+  if { $id != -1 } {
+    set bond2 [lreplace $bond2 $id $id ]
+  }
+  $sel setbonds [list $bond1 $bond2] 
+  $sel delete
+}
+
+proc addbond { molid atom1 atom2 } {
+  if {$atom1 == $atom2 } {
+    #error "cannot bond an atom to itself"
+    return
+  }
+  if { $atom1 > $atom2 } {
+    set tmp $atom1
+    set atom1 $atom2
+    set atom2 $tmp
+  }
+  set sel [atomselect $molid "index $atom1 $atom2"]
+  lassign [$sel getbonds] bond1 bond2
+
+  set id [lsearch -exact $bond1 $atom2]
+  if { $id == -1 } {
+    lappend bond1 $atom2
+  }
+  set id [lsearch -exact $bond2 $atom1]
+  if { $id == -1 } {
+    lappend bond2 $atom1
+  }
+  $sel setbonds [list $bond1 $bond2] 
+  $sel delete
+}
+
+proc createSel {atom} {
+   global sel
+   set sel [uplevel "#0" [list atomselect top $atom]]
+}
+
+proc setDynBond {molid atom1 atom2 DistCut} {
+   #set atom1Obj [createSel $atom1]
+   #set atom2Obj [createSel $atom2]
+   set atom1Obj [atomselect $molid $atom1]
+   set atom2Obj [atomselect $molid $atom2]
+   set atom1BondList [lindex [$atom1Obj getbonds] {0}]
+   set atom2BondList [lindex [$atom2Obj getbonds] {0}]
+   set atom1idx [lindex [$atom1Obj get index] {0 0}]
+   set atom2idx [lindex [$atom2Obj get index] {0 0}]
+   set nbond 0
+   # Check if there is a bond between atom1 and atom2
+   if {([lsearch -exact $atom2BondList $atom1idx] >= 0) && ([lsearch -exact $atom1BondList $atom2idx] >= 0)} {
+     set nbond 1
+   }
+   puts "There is $nbond bond between Atom1 ($atom1) and Atom2 ($atom2)"
+   if {$nbond == 1} {
+     puts "\nDeleting the bond between Atom1 and Atom2 ...\n"
+     delbond $molid $atom1idx $atom2idx
+   }
+   puts "\nCreating a Dynamic Bonds representation...\n"
+   set repid [molinfo $molid get "numreps"]
+   mol addrep 0
+   mol modstyle $repid $molid DynamicBonds $DistCut 0.100000 50.000000
+   mol modselect $repid $molid "index $atom1idx $atom2idx"
+}
+
+proc delWATBond {molid} {
+   set watH [atomselect $molid "resname WAT and not name O"]
+   foreach {i j} [$watH get index] {
+     delbond $molid $i $j
+   }
+}
+
+setDynBond 0 "resname MOL and name O1" "resname MOL and name H10" 1.1
+setDynBond 0 "resname MOL and name H10" "resname MOL and name N2" 1.1
+delWATBond 0
+setDynBond 0 "resname MOL and name O5" "resname MOL and name C5" 1.6

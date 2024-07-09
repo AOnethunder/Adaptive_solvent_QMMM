@@ -1,0 +1,132 @@
+# this will only work for one molecule
+
+#VMD  --- start of VMD description block
+#Name:
+#  Bridging waters
+#Synopsis:
+#  Example of how to display a selection that changes over an animation
+#Version:
+#  1.0
+#Uses VMD version:
+#  1.1
+#Ease of use:
+#  4
+#Procedures:
+# <li> start_bridging molid -- start the trace on the vmd_frame for molid
+# <li> stop_bridging -- top the current trace
+# <li> calc_bridging -- check the cache, create a selection if needed
+# <li> num_bridging -- example of how to get data from the cache
+#Description:
+#  When the frame changes, a cache is checked to see if a selection has been
+# computed for it.  If not, one is made and added to the cache.  The Tcl
+# variable "bridging" is set to the atomselection, and element 0 of the
+# graphics list is changed to "@bridging".  This forces that element to
+# be redrawn using the new selection.
+#Warning:
+# This will only work for one selection on one molecule
+#Example:
+# <pre>
+# mol load psf er-ere.psf pdb er-ere.pdb
+# # start the bridge calculations
+# start_bridging
+# # however, one frame has already been read, so do its calculations
+# # by hand
+# calc_bridging
+# # read the rest of the frames (the selections are automatically computed)
+# animate read dcd dyn100frames.DCD
+# </pre>
+#Files: 
+# <a href="active_selection.vmd">active_selection.vmd</a>
+#See also:
+# <a href="http://www.ks.uiuc.edu/Research/vmd/script_library/sscache/">
+# SSCache</a>
+#Author: 
+# Andrew Dalke &lt;dalke@ks.uiuc.edu&gt;
+#\VMD  --- end of block
+
+#read qmmm MD simulation output (e.g. qmmm_xtb.out)
+#you can also use "mol selupdate" instead ??
+proc read_qmregion {output_file} {
+   global qmregion
+   set fp [open $output_file r]
+   set data [split [read $fp] "\n"]
+   set found 0
+   set num -1
+   foreach line $data {
+      if {[string equal $found 1]} {
+	     set line_fields [regexp -inline -all -- {\S+} $line]
+		 if {[llength $line_fields] > 1} {
+		    lappend resids [lindex $line_fields 2]
+		 } else {
+		    incr num
+			#puts $num
+			#puts $resids
+		    set found 0
+			if {$num % 10 == 0} {
+			   set qmregion([expr $num / 10 - 1]) $resids
+			}
+		 }
+	  }
+      if {[string eq $line "QMMM: Nearest ID    Res ID     Distance(A)"]} {
+	     set found 1
+		 set resids {}
+		 continue
+		 }
+   }
+   close $fp
+}
+
+# start the trace
+proc start_bridging {{molid top} {QMMMMDOUT qmmm_xtb.out}} {
+ global vmd_frame bridging_molecule qmregion
+ if {![string compare $molid top]} {
+    set molid [molinfo top]
+  }
+  read_qmregion $QMMMMDOUT
+  #you can also use "mol selupdate" instead ??
+  trace variable vmd_frame($molid) w calc_bridging
+  set bridging_molecule $molid
+}
+
+# stop the trace
+proc stop_bridging {} {
+  global bridging_molecule vmd_frame
+  trace vdelete vmd_frame($bridging_molecule) w calc_bridging
+}
+
+# do the actual calculation
+proc calc_bridging {args} {
+  global bridging_waters bridging_molecule bridging qmregion
+  # get the current frame number
+  set frame [molinfo $bridging_molecule get frame]
+
+  # has the selection already been made?
+  if {! [info exists bridging_waters($frame)]} {
+    #puts "Calculating frame $frame for $bridging_molecule"
+    set bridging_waters($frame) [atomselect $bridging_molecule \
+       "resid $qmregion($frame)" frame $frame]
+  }
+  # set things up for the graphics form to use the precomputed selection
+  #set bridging $bridging_waters($frame)
+  # do this since otherwise the selection is deleted when the proc ends
+  #$bridging global
+  # update the 2th element of the graphics molecule
+  # Note: if the display wasn't turned off, there would be an extra
+  # update of the animation ... very bad.  Or maybe there is a bug
+  # in VMD here?
+  display update off
+  mol modselect 2 $bridging_molecule "resid $qmregion($frame)"
+  display update on
+}
+
+# a simple example of how to use the precomputed results
+# This prints the number of atoms in the given selection for
+# each frame
+proc num_bridging {} {
+  global bridging_waters
+  set nums [lsort -integer [array names bridging_waters]]
+  foreach num $nums {
+    set num_atoms [$bridging_waters($num) num]
+    puts "Frame $num has $num_atoms atoms"
+  }
+}
